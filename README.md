@@ -12,6 +12,11 @@ Alur per dokumen: **Buka → Cek di Review → Edit/Revoke → Ganti KBLI (+prod
 3. Buka `https://fasih-sm.bps.go.id`. Tombol **KBLI Koreksi KBLI** muncul di kiri bawah (pintasan **Alt+5**).
 
 ## 2. Format Excel
+Unduh template: **[template-pengecekan-kbli.xlsx](template-pengecekan-kbli.xlsx)**. Isinya tiga sheet:
+- **Pengecekan KBLI**: isi data di sini (sheet pertama, yang dibaca skrip).
+- **Contoh**: contoh pengisian untuk berbagai kasus (tidak dibaca skrip).
+- **Petunjuk**: keterangan setiap kolom.
+
 Skrip mencari sheet yang punya kolom **KBLI Baru**. Penulisan nama kolom bebas (spasi, titik, huruf besar/kecil tidak berpengaruh).
 
 | Kolom | Wajib | Keterangan |
