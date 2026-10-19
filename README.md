@@ -1,8 +1,10 @@
-# FASIH Koreksi KBLI & Anomali — Panduan Pengguna (v2.0.0)
+# FASIH Koreksi KBLI & Anomali — Panduan Pengguna (v2.1.0)
 
 Userscript untuk mengoreksi KBLI di FASIH SE2026 secara massal berdasarkan Excel **Pengecekan KBLI**.
 
 Alur per dokumen: **Buka → Cek di Review → Edit/Revoke → Ganti KBLI (+produk, kegiatan utama) → Tandai anomali KBLI → Kirim → Approve**
+
+Baris **Edit KBLI = 0** (KBLI sudah benar): **Buka → Edit/Revoke → tambah catatan `#0` di 13.g → Kirim → Approve**, tanpa mengubah isian apa pun.
 
 > **Privasi:** file Excel hanya dibaca di browser pengguna. Tidak ada data yang dikirim ke server lain selain isian ke FASIH.
 
@@ -25,7 +27,7 @@ Skrip mencari sheet yang punya kolom **KBLI Baru**. Penulisan nama kolom bebas (
 | `nama_usaha` | ✔ | Untuk mencocokkan kartu usaha |
 | `kbli_akhir` | ✔ | KBLI saat ini |
 | `KBLI Baru` | ✔ | KBLI pengganti (kosong = KBLI tidak diubah) |
-| `Edit KBLI (1=Ya)` | – | Kalau kolom ada, **hanya baris bernilai 1 / Ya** yang dikerjakan |
+| `Edit KBLI (1=Ya)` | – | **1** = dikoreksi · **0** = tidak diubah, hanya catatan `#0` · **kosong** = dilewati |
 | `Produk`, `Produk Baru` | – | Produk diganti kalau `Produk Baru` terisi |
 | `keg_utama`, `Kegiatan utama` | – | Kegiatan utama lama & baru |
 | `kec`, `desa`, `nmsls`, `catatan` | – | Info tampilan & laporan |
@@ -44,6 +46,7 @@ Skrip mencari sheet yang punya kolom **KBLI Baru**. Penulisan nama kolom bebas (
 - **Approve setelah kirim**
 - **Submit Paksa kalau ada galat:** mati secara bawaan (dokumen bergalat ditandai *Perlu cek*).
 - **Tag catatan KBLI:** catatan di 13.g sebagai jejak pemeriksaan (bawaan `#1`; kosongkan untuk menonaktifkan).
+- **Tag catatan untuk Edit KBLI = 0:** bawaan `#0`; kosongkan kalau baris 0 tidak mau dikerjakan (berlaku saat Excel dimuat).
 - **Penjelasan anomali KBLI:** teks penjelasan saat anomali KBLI ditandai "Ya, Sesuai Kondisi Lapangan".
 
 ## 5. Arti status

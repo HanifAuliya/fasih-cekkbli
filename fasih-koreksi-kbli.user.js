@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FASIH Koreksi KBLI & Anomali
 // @namespace    hanif-bps-hst
-// @version      2.0.0
+// @version      2.1.0
 // @description  Koreksi KBLI massal di FASIH SE2026 dari Excel "Pengecekan KBLI": ganti KBLI ke KBLI Baru di kartu usaha yang tepat, sesuaikan produk & kegiatan utama, tandai anomali KBLI "Ya, Sesuai Kondisi Lapangan", lalu Kirim & Approve.
 // @author       Hanif
 // @match        https://fasih-sm.bps.go.id/*
@@ -21,6 +21,9 @@
  * ke server mana pun selain isian ke FASIH itu sendiri.
  *
  * Riwayat versi
+ *   2.1.0  - Baris Edit KBLI = 0 ikut dikerjakan: tidak ada isian yang diubah,
+ *            hanya ditambah catatan #0 di 13.g, lalu Kirim & Approve.
+ *          - Tag catatan untuk baris 0 bisa diatur di panel (kosong = baris 0 dilewati).
  *   2.0.0  - Tahan banting saat 429: jeda server tidak lagi menyebabkan dokumen
  *            ditandai "macet".
  *          - Kunci tab: kalau FASIH terbuka di beberapa tab, hanya satu tab yang
@@ -45,7 +48,7 @@
   // =========================================================================
   const APP = {
     name: "Koreksi KBLI",
-    version: "2.0.0",
+    version: "2.1.0",
     title: "Koreksi KBLI & Anomali",
     badge: "KBLI",
     launch: "Koreksi KBLI",
@@ -82,6 +85,7 @@
     approve: true,
     forceOnGalat: false, // galat -> Submit Paksa (default: berhenti, perlu cek)
     catatanTag: "#1", // tag catatan di 13.g tiap kartu yang diproses ("" = tidak menambah catatan)
+    catatanTag0: "#0", // tag catatan untuk baris Edit KBLI = 0 ("" = baris 0 dilewati)
     anomaliText: DEFAULT_ANOMALI_TEXT, // penjelasan anomali KBLI
   };
 
@@ -141,6 +145,7 @@
   const saveRun = (r) => saveJson(RUN_KEY, r);
   const anomaliText = () => String(loadConf().anomaliText || "").trim() || DEFAULT_ANOMALI_TEXT;
   const catatanTag = () => String(loadConf().catatanTag ?? "").trim();
+  const catatanTag0 = () => String(loadConf().catatanTag0 ?? "").trim();
 
   function updateItem(id, changes) {
     const queue = loadQueue();
@@ -480,8 +485,9 @@
     const d = String(s ?? "").trim();
     return /^\d{1,5}$/.test(d) ? d.padStart(5, "0") : d;
   };
-  // Nilai "Edit KBLI" yang berarti ya: 1, 1.0, Ya, Y, TRUE
+  // Nilai "Edit KBLI": ya = 1, 1.0, Ya, Y, TRUE; tidak = 0, 0.0, Tidak, T, N, FALSE
   const isYes = (v) => /^(1(\.0+)?|ya|y|true)$/i.test(String(v || "").trim());
+  const isNo = (v) => /^(0(\.0+)?|tidak|t|n|no|false)$/i.test(String(v || "").trim());
 
   async function parseWorkbook(arrayBuffer) {
     const sheets = await readXlsx(arrayBuffer);
@@ -500,36 +506,46 @@
       const byDoc = new Map();
       let skipped = 0;
       let notFlagged = 0;
+      let zeroRows = 0;
+      const tag0 = catatanTag0();
       const dataRows = sheet.rows.slice(hi + 1).filter((r) => r.some((x) => String(x ?? "").trim()));
       dataRows.forEach((r, i) => {
         const get = (k) => (col[k] >= 0 ? String(r[col[k]] ?? "").trim() : "");
-        // Kolom "Edit KBLI" ada -> hanya baris bertanda ya. Kolom tidak ada -> semua baris dikerjakan.
-        if (col.editKbli >= 0 && !isYes(get("editKbli"))) {
+        // Kolom "Edit KBLI" ada: 1 -> dikoreksi, 0 -> tidak diubah apa pun, hanya diberi catatan #0
+        // (kalau tag #0 dikosongkan di pengaturan, baris 0 dilewati), selain itu dilewati.
+        // Kolom tidak ada -> semua baris dianggap 1.
+        const flag = get("editKbli");
+        const onlyTag = col.editKbli >= 0 && isNo(flag);
+        if (col.editKbli >= 0 && !isYes(flag) && !(onlyTag && tag0)) {
           notFlagged++;
           return;
         }
         const rawLink = get("link");
         const url = (rawLink.match(/https?:\/\/[^"'\s<>]+/) || [""])[0];
         const ids = (url || rawLink).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
-        // KBLI Baru kosong = KBLI tidak diubah (dibiarkan seperti sebelumnya); produk/kegiatan utama tetap diproses
-        const kbliBaru = padKbli(get("kbliBaru"));
+        // KBLI Baru kosong = KBLI tidak diubah (dibiarkan seperti sebelumnya); produk/kegiatan utama tetap diproses.
+        // Baris Edit KBLI = 0 tidak mengubah apa pun, jadi isian "baru"-nya diabaikan.
+        const kbliBaru = onlyTag ? "" : padKbli(get("kbliBaru"));
         if (!ids.length || (kbliBaru && !/^\d{5}$/.test(kbliBaru))) {
           skipped++;
           return;
         }
         const id = ids[ids.length - 1].toLowerCase();
+        if (onlyTag) zeroRows++;
         const target = {
           row: hi + i + 2,
           no: get("no"),
           nama: get("nama"),
           codeIdentity: get("codeIdentity"),
           kegUtamaLama: get("kegUtama"),
-          kegUtamaBaru: get("kegUtamaBaru"),
+          kegUtamaBaru: onlyTag ? "" : get("kegUtamaBaru"),
           produkLama: get("produk"),
-          produkBaru: get("produkBaru"),
+          produkBaru: onlyTag ? "" : get("produkBaru"),
           kbliLama: padKbli(get("kbliAkhir")),
           kbliBaru,
           catatan: get("catatan"),
+          editKbli: onlyTag ? "0" : "1",
+          onlyTag,
         };
         if (!byDoc.has(id))
           byDoc.set(id, {
@@ -546,7 +562,7 @@
           });
         byDoc.get(id).targets.push(target);
       });
-      return { items: Array.from(byDoc.values()), sheet: sheet.name, rows: dataRows.length, skipped, notFlagged };
+      return { items: Array.from(byDoc.values()), sheet: sheet.name, rows: dataRows.length, skipped, notFlagged, zeroRows };
     }
     throw new Error('tidak ada sheet dengan kolom "KBLI Baru"');
   }
@@ -994,6 +1010,8 @@
   // =========================================================================
   // Baca saja (aman di halaman Review, tanpa revoke).
   async function readKbliCard(inst, t) {
+    // Edit KBLI = 0: tidak ada yang dibandingkan; catatan #0 hanya bisa ditambahkan di mode edit
+    if (t.onlyTag) return { changed: false, already: false, summary: `Edit KBLI = 0 → catatan ${catatanTag0()}` };
     await waitFor(() => box("kbli", inst) || box("kbli_genai", inst), 3000);
     const code = effectiveKbliCode(inst);
     const produkBox = box("produk", inst);
@@ -1018,7 +1036,19 @@
   }
 
   // Ganti KBLI di kartu yang sedang terbuka, lalu produk & kegiatan utama.
+  // Kartu Edit KBLI = 0: KBLI dinilai sudah benar, tidak ada isian yang diubah, cukup diberi catatan #0.
+  async function tagOnlyCard(inst) {
+    const tag = catatanTag0();
+    if (!tag) return { changed: false, already: true, summary: "Edit KBLI = 0, tag #0 dinonaktifkan" };
+    await waitFor(() => box("kbli", inst) || box("kbli_genai", inst), 5000);
+    const catatan = await addKbliCatatan(inst, tag);
+    if (!catatan.found) throw Object.assign(new Error(`tombol Catatan di bagian KBLI tidak ketemu, catatan ${tag} belum ditambahkan`), { soft: true });
+    if (catatan.added) return { changed: true, already: false, summary: `tidak diubah, catatan KBLI: ${tag}` };
+    return { changed: false, already: true, summary: `tidak diubah, tag ${catatan.existingTag} sudah ada di thread` };
+  }
+
   async function ensureKbliCard(inst, t) {
+    if (t.onlyTag) return tagOnlyCard(inst);
     const notes = [];
     let changed = false;
     await waitFor(() => box("kbli", inst) || box("kbli_genai", inst), 5000);
@@ -1706,6 +1736,8 @@
       }
       case "anomali": {
         if (!onEditOf(did(item))) return setStage("edit");
+        // Dokumen yang semua barisnya Edit KBLI = 0 tidak diubah apa pun, termasuk anomali
+        if (item.targets.every((t) => t.onlyTag)) return setStage("submit");
         const notes = await handleKbliAnomali();
         if (notes.length) {
           const q = loadQueue().find((x) => x.id === item.id);
@@ -1985,6 +2017,8 @@
     const names = q.targets.map((t) => esc(t.nama || "(tanpa nama)")).join(" <span style='color:#a0a4bb'>+</span> ");
     const diff = q.targets
       .map((t) => {
+        if (t.onlyTag)
+          return `${q.targets.length > 1 ? `<span class="kk-chg"><span class="u">${esc((t.nama || "").split("(")[0].trim())}</span></span>` : ""}<span class="kk-chg"><span class="k">KBLI</span><span class="u">${esc(t.kbliLama || "-")} (tetap)</span></span><span class="kk-chg"><span class="k">Edit KBLI = 0</span><span class="a">catatan ${esc(catatanTag0())}</span></span>`;
         const kbli =
           !t.kbliBaru || t.kbliLama === t.kbliBaru
             ? `<span class="kk-chg"><span class="k">KBLI</span><span class="u">${esc(t.kbliBaru || t.kbliLama || "-")} (tetap)</span></span>`
@@ -2090,7 +2124,7 @@
               <summary>Panduan singkat</summary>
               <ol>
                 <li>Buka halaman <b>daftar assignment SE2026</b> di FASIH sekali (alamatnya diingat untuk wilayah Anda).</li>
-                <li>Muat file Excel <b>Pengecekan KBLI</b>. Hanya baris dengan <i>Edit KBLI = 1</i> yang masuk antrean.</li>
+                <li>Muat file Excel <b>Pengecekan KBLI</b>. Baris <i>Edit KBLI = 1</i> dikoreksi; baris <i>Edit KBLI = 0</i> tidak diubah, hanya diberi catatan #0. Baris kosong dilewati.</li>
                 <li>Klik <b>🧪 Uji 1 dokumen</b> dulu: skrip berhenti tepat sebelum Kirim supaya hasilnya bisa diperiksa.</li>
                 <li>Kalau sudah yakin, jalankan <b>▶ 5 / ▶ 20 / ⚡ Semua</b>. Jangan klik apa pun di FASIH selama berjalan; pakai <b>⏸ Jeda</b> kalau perlu.</li>
                 <li>Dokumen <b>Perlu cek</b> / <b>Gagal</b> dikerjakan lewat tombol ✍ (panel bantu manual), lalu unduh <b>Laporan CSV</b>.</li>
@@ -2126,6 +2160,10 @@
                 <label class="kk-field">Tag catatan KBLI (13.g)
                   <input data-conftext="catatanTag" value="${esc(conf.catatanTag)}" placeholder="kosongkan = tidak menambah catatan" maxlength="40">
                   <small>Ditambahkan sekali per kartu sebagai jejak pemeriksaan</small>
+                </label>
+                <label class="kk-field">Tag catatan untuk Edit KBLI = 0
+                  <input data-conftext="catatanTag0" value="${esc(conf.catatanTag0)}" placeholder="kosongkan = baris Edit KBLI 0 dilewati" maxlength="40">
+                  <small>Kartu tidak diubah, hanya diberi catatan ini lalu Kirim &amp; Approve. Berlaku saat Excel dimuat.</small>
                 </label>
                 <label class="kk-field">Penjelasan anomali KBLI
                   <input data-conftext="anomaliText" value="${esc(conf.anomaliText)}" placeholder="${esc(DEFAULT_ANOMALI_TEXT)}" maxlength="200">
@@ -2356,11 +2394,11 @@
 
   async function loadExcel(file) {
     try {
-      const { items, sheet, rows, skipped, notFlagged } = await parseWorkbook(await file.arrayBuffer());
+      const { items, sheet, rows, skipped, notFlagged, zeroRows } = await parseWorkbook(await file.arrayBuffer());
       if (!items.length) {
         alert(
           `Tidak ada dokumen yang bisa diantrekan dari sheet "${sheet}" (${rows} baris` +
-            `${notFlagged ? `, ${notFlagged} baris Edit KBLI bukan 1` : ""}${skipped ? `, ${skipped} baris tanpa link / KBLI Baru tidak valid` : ""}).`,
+            `${notFlagged ? `, ${notFlagged} baris Edit KBLI bukan 1/0` : ""}${skipped ? `, ${skipped} baris tanpa link / KBLI Baru tidak valid` : ""}).`,
         );
         return;
       }
@@ -2379,7 +2417,7 @@
       ui.selected.clear();
       openPanel();
       toast(
-        `${rows} baris → ${merged.length} dokumen dari sheet "${sheet}"${kept ? ` · ${kept} progres lama dipertahankan` : ""}${notFlagged ? ` · ${notFlagged} baris Edit KBLI ≠ 1 dilewati` : ""}${skipped ? ` · ${skipped} baris tanpa link / KBLI Baru tidak valid dilewati` : ""}`,
+        `${rows} baris → ${merged.length} dokumen dari sheet "${sheet}"${kept ? ` · ${kept} progres lama dipertahankan` : ""}${zeroRows ? ` · ${zeroRows} baris Edit KBLI = 0 (hanya catatan ${catatanTag0()})` : ""}${notFlagged ? ` · ${notFlagged} baris Edit KBLI kosong / bukan 1-0 dilewati` : ""}${skipped ? ` · ${skipped} baris tanpa link / KBLI Baru tidak valid dilewati` : ""}`,
       );
     } catch (e) {
       alert(`Gagal membaca Excel: ${e.message}`);
@@ -2421,7 +2459,7 @@
       return `"${s.replace(/"/g, '""')}"`;
     };
     const header = [
-      "no", "baris_excel", "nama_usaha", "kec", "desa", "sls", "kbli_lama", "kbli_baru", "produk_lama", "produk_baru",
+      "no", "baris_excel", "edit_kbli", "nama_usaha", "kec", "desa", "sls", "kbli_lama", "kbli_baru", "produk_lama", "produk_baru",
       "kegiatan_utama_lama", "kegiatan_utama_baru", "catatan_excel", "status", "keterangan", "hasil", "rincian_proses", "waktu", "link",
     ];
     const lines = [header.join(",")];
@@ -2429,7 +2467,7 @@
       q.targets.forEach((t) =>
         lines.push(
           [
-            t.no, t.row, t.nama, q.kec, q.desa, q.sls, t.kbliLama, t.kbliBaru, t.produkLama, t.produkBaru, t.kegUtamaLama, t.kegUtamaBaru,
+            t.no, t.row, t.editKbli || "1", t.nama, q.kec, q.desa, q.sls, t.kbliLama, t.kbliBaru, t.produkLama, t.produkBaru, t.kegUtamaLama, t.kegUtamaBaru,
             t.catatan, (STATUS[q.status] || {}).label, q.reason, q.result, (q.kbliNotes || []).join("; "), q.doneAt, docUrl(q),
           ]
             .map(cell)
@@ -2504,6 +2542,8 @@
       .map((x) => {
         const now = card && t === x ? card.code : null;
         const ok = now !== null && (!x.kbliBaru || now === x.kbliBaru);
+        if (x.onlyTag)
+          return `<div class="doc" style="margin-top:8px">${esc(x.nama)}</div><div class="line">Edit KBLI = 0: <span class="n">tidak diubah</span>, hanya catatan ${esc(catatanTag0())}${now ? ` · KBLI sekarang ${esc(now)}` : ""}</div>`;
         const kbliLine = x.kbliBaru
           ? `<div class="line">KBLI: <span class="o">${esc(x.kbliLama || "-")}</span> → <span class="n">${esc(x.kbliBaru)}</span>${now === null ? "" : ok ? " ✓" : ` (sekarang ${esc(now || "-")})`}</div>`
           : `<div class="line">KBLI: <span class="n">tetap</span> (tidak diubah)${now ? ` · sekarang ${esc(now)}` : ""}</div>`;
